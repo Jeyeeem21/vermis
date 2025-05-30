@@ -9,8 +9,11 @@
   "dependencies": {
     "core-js": "^3.8.3",
     "firebase": "^11.7.3",
+    "jspdf": "^3.0.1",
+    "jspdf-autotable": "^5.0.2",
     "lucide-vue-next": "^0.511.0",
     "register-service-worker": "^1.7.2",
+    "sweetalert2": "^11.22.0",
     "vue": "^3.2.13",
     "vue-router": "^4.0.3"
   },
