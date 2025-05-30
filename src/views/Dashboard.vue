@@ -329,7 +329,7 @@ export default {
         this.authLoading = false;
         if (!this.dataFetched) {
           this.fetchSensorData();
-          setInterval(this.fetchSensorData, 1800000);
+          setInterval(this.fetchSensorData, 1000);
           this.dataFetched = true;
         }
       } else {
@@ -359,40 +359,39 @@ export default {
       });
     },
     async fetchSensorData() {
-      if (!this.user || !this.user.uid) {
-        console.error('User is not authenticated');
-        return;
-      }
+  if (!this.user || !this.user.uid) {
+    console.error('User is not authenticated');
+    return;
+  }
 
-      // Sensor data logic
-      const now = new Date();
-      let startDate, endDate, groupBy;
+  const now = new Date();
+  let startDate, endDate, groupBy;
 
-      if (this.chartType === 'hourly') {
-        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-        groupBy = 'hour';
-      } else if (this.chartType === 'daily') {
-        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-        endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-        groupBy = 'day';
-      } else if (this.chartType === 'monthly') {
-        startDate = new Date(now.getFullYear(), 0, 1);
-        endDate = new Date(now.getFullYear() + 1, 0, 1);
-        groupBy = 'month';
-      } else if (this.chartType === 'yearly') {
-        startDate = new Date(0);
-        endDate = new Date(now.getFullYear() + 1, 0, 1);
-        groupBy = 'year';
-      }
+  // Adjust for UTC explicitly
+  if (this.chartType === 'hourly') {
+    startDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    endDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+    groupBy = 'hour';
+  } else if (this.chartType === 'daily') {
+    startDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    endDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));
+    groupBy = 'day';
+  } else if (this.chartType === 'monthly') {
+    startDate = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+    endDate = new Date(Date.UTC(now.getUTCFullYear() + 1, 0, 1));
+    groupBy = 'month';
+  } else if (this.chartType === 'yearly') {
+    startDate = new Date(0);
+    endDate = new Date(Date.UTC(now.getUTCFullYear() + 1, 0, 1));
+    groupBy = 'year';
+  }
 
-      const sensorQuery = query(
-        collection(db, 'SensorData'),
-        where('timestamp', '>=', startDate.toISOString()),
-        where('timestamp', '<', endDate.toISOString()),
-        orderBy('timestamp', 'asc')
-      );
-
+  const sensorQuery = query(
+    collection(db, 'SensorData'),
+    where('timestamp', '>=', startDate.toISOString()),
+    where('timestamp', '<', endDate.toISOString()),
+    orderBy('timestamp', 'asc')
+  );
       try {
         const snapshot = await getDocs(sensorQuery);
         const rawData = [];
@@ -438,100 +437,76 @@ export default {
           humidity: null,
           soilMoisture: null,
         };
-
-        // Task fetching and notification logic
-        const taskQuery = query(
-          collection(db, 'tasks'),
-          orderBy('date', 'asc')
-        );
-
-        try {
-          const snapshot = await getDocs(taskQuery);
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-
-          snapshot.forEach((doc) => {
-            const taskData = doc.data();
-            // Check essential fields and completion status
-            if (
-              taskData.assignedTo === 'admin' &&
-              (taskData.completed === false || taskData.completedAt === null || typeof taskData.completedAt === 'undefined') &&
-              taskData.date &&
-              taskData.title &&
-              taskData.id
-            ) {
-              // Handle date flexibly (string or Firestore Timestamp)
-              let taskDate;
-              if (typeof taskData.date === 'string') {
-                taskDate = new Date(taskData.date);
-              } else if (taskData.date && typeof taskData.date.toDate === 'function') {
-                taskDate = taskData.date.toDate(); // Convert Firestore Timestamp
-              } else {
-                console.warn('Invalid task date format for task:', taskData.id);
-                return;
-              }
-              
-              if (isNaN(taskDate)) {
-                console.warn('Unable to parse task date for task:', taskData.id);
-                return;
-              }
-              
-              taskDate.setHours(0, 0, 0, 0);
-              const timeDiff = taskDate.getTime() - today.getTime();
-              const daysUntil = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
-              let shouldNotify = false;
-
-              // Determine if notification is needed based on recurrence
-              if (taskData.recurrence === 'custom' && taskData.customInterval) {
-                shouldNotify = daysUntil >= 0 && daysUntil % taskData.customInterval === 0;
-              } else if (taskData.recurrence === 'daily') {
-                shouldNotify = true; // Notify every day for daily tasks, past or future
-              } else if (taskData.recurrence === 'weekly') {
-                shouldNotify = daysUntil >= 0 && daysUntil % 7 === 0;
-              } else if (taskData.recurrence === 'bi-weekly') {
-                shouldNotify = daysUntil >= 0 && daysUntil % 14 === 0;
-              } else if (taskData.recurrence === 'monthly') {
-                const taskMonth = taskDate.getMonth();
-                const todayMonth = today.getMonth();
-                const taskYear = taskDate.getFullYear();
-                const todayYear = today.getFullYear();
-                // Notify if day matches and we're in a future or current month
-                shouldNotify =
-                  taskDate.getDate() === today.getDate() &&
-                  (todayYear > taskYear || (todayYear === taskYear && todayMonth >= taskMonth));
-              } else {
-                // For non-recurring tasks, notify on the task date
-                shouldNotify = daysUntil === 0;
-              }
-
-              if (shouldNotify) {
-                newAlerts.push({
-                  id: taskData.id,
-                  title: `Task Alert: ${taskData.title}`,
-                  time: taskData.createdAt && typeof taskData.createdAt === 'string'
-                    ? new Date(taskData.createdAt).toLocaleString('en-US')
-                    : taskDate.toLocaleString('en-US'), // Fallback to task date
-                });
-              }
-            } else {
-              console.warn('Task missing required fields, not for admin, or already completed:', taskData.id);
-            }
-          });
-
-          // Sort alerts by time (newest first)
-          newAlerts.sort((a, b) => {
-            const dateA = new Date(a.time);
-            const dateB = new Date(b.time);
-            return dateB.getTime() - dateA.getTime();
-          });
-
-          this.alerts = newAlerts;
-          this.unreadNotifications = newAlerts.length > 0;
-        } catch (error) {
-          console.error('Error fetching tasks:', error);
-        }
+        this.alerts = newAlerts;
+        this.unreadNotifications = newAlerts.length > 0;
       } catch (error) {
         console.error('Error fetching sensor data:', error);
+      }
+
+      const taskQuery = query(
+        collection(db, 'tasks'),
+        orderBy('createdAt', 'desc')
+      );
+
+      try {
+        const snapshot = await getDocs(taskQuery);
+        const newAlerts = [...this.alerts];
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        snapshot.forEach((doc) => {
+          const taskData = doc.data();
+          if (
+            taskData.assignedTo === 'admin' &&
+            taskData.completed === false &&
+            taskData.createdAt &&
+            taskData.createdBy &&
+            taskData.date &&
+            taskData.description &&
+            taskData.id &&
+            taskData.priority &&
+            taskData.recurrence &&
+            taskData.time &&
+            taskData.title &&
+            taskData.type
+          ) {
+            const taskDate = new Date(taskData.date);
+            taskDate.setHours(0, 0, 0, 0);
+            const timeDiff = today.getTime() - taskDate.getTime();
+            const daysSince = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
+
+            let shouldNotify = false;
+            if (taskData.recurrence === 'custom' && taskData.customInterval) {
+              shouldNotify = daysSince >= 0 && daysSince % taskData.customInterval === 0;
+            } else if (taskData.recurrence === 'daily') {
+              shouldNotify = daysSince >= 0;
+            } else if (taskData.recurrence === 'weekly') {
+              shouldNotify = daysSince >= 0 && daysSince % 7 === 0;
+            } else if (taskData.recurrence === 'bi-weekly') {
+              shouldNotify = daysSince >= 0 && daysSince % 14 === 0;
+            } else if (taskData.recurrence === 'monthly') {
+              const taskMonth = taskDate.getMonth();
+              const todayMonth = today.getMonth();
+              shouldNotify =
+                taskDate.getDate() === today.getDate() &&
+                (todayMonth - taskMonth) % 1 === 0 &&
+                daysSince >= 0;
+            }
+
+            if (shouldNotify) {
+              newAlerts.push({
+                id: taskData.id,
+                title: `Task Alert: ${taskData.title}`,
+                time: new Date(taskData.createdAt).toLocaleString('en-US'),
+              });
+            }
+          }
+        });
+
+        this.alerts = newAlerts;
+        this.unreadNotifications = newAlerts.length > 0;
+      } catch (error) {
+        console.error('Error fetching tasks:', error);
       }
     },
     aggregateData(rawData, groupBy) {
@@ -1423,4 +1398,3 @@ body {
   }
 }
 </style>
-```
